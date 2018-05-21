@@ -1,0 +1,2 @@
+import hyperspherical_vae_tensorflow.ops
+import hyperspherical_vae_tensorflow.distributions

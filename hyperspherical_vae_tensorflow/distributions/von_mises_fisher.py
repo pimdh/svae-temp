@@ -37,9 +37,11 @@ from tensorflow.python.ops import gen_array_ops
 from tensorflow.python.ops import linalg_ops
 from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops.distributions.beta import Beta
+from tensorflow.python.ops.custom_gradient import custom_gradient
+from tensorflow.python.ops.gradients_impl import gradients, AggregationMethod
 
-from hyperspherical_vae.ops.ive import ive
-from hyperspherical_vae.distributions.hyperspherical_uniform import HypersphericalUniform
+from hyperspherical_vae_tensorflow.ops.ive import ive
+from hyperspherical_vae_tensorflow.distributions.hyperspherical_uniform import HypersphericalUniform
 
 __all__ = [
     "VonMisesFisher",
@@ -152,11 +154,12 @@ class VonMisesFisher(distribution.Distribution):
 
         return z
 
-    def __sample_w3(self, n, seed):
-        # This is not working!!  --> NaN
+    def __sample_w3(self, n, seed, eps=1e-8):
         shape = array_ops.concat(([n], self.batch_shape_tensor()[:-1], [1]), 0)
-        u = random_ops.random_uniform(shape, dtype=self.dtype, seed=seed)
-        self.__w = 1 + math_ops.log(u + (1 - u) * math_ops.exp(-2 * self.scale)) / self.scale
+        u = random_ops.random_uniform(shape, eps, 1 - eps, dtype=self.dtype, seed=seed)
+        self.__w = 1 + math_ops.reduce_logsumexp(
+            array_ops.stack([math_ops.log(u), math_ops.log(1 - u) - 2 * self.scale], -1), -1) / self.scale
+
         return self.__w
 
     def __sample_w_rej(self, n, seed):
@@ -221,7 +224,7 @@ class VonMisesFisher(distribution.Distribution):
 
     def _log_normalization(self):
         output = -((self.__mf / 2 - 1) * math_ops.log(self.scale) - (self.__mf / 2) * math.log(2 * math.pi) - (
-                    self.scale + math_ops.log(ive(self.__mf / 2 - 1, self.scale))))
+                self.scale + math_ops.log(ive(self.__mf / 2 - 1, self.scale))))
 
         return array_ops.reshape(output, ops.convert_to_tensor(array_ops.shape(output)[:-1]))
 
@@ -230,10 +233,42 @@ class VonMisesFisher(distribution.Distribution):
                                    ops.convert_to_tensor(array_ops.shape(self.scale)[:-1])) + self._log_normalization()
 
     def _mean(self):
-        return self._loc * (ive(self.__mf / 2, self.scale) / ive(self.__mf / 2 - 1, self.scale))
+        return self.loc * (ive(self.__mf / 2, self.scale) / ive(self.__mf / 2 - 1, self.scale))
 
     def _mode(self):
         return self._mean()
+
+    # change name
+    def add_g_cor(self, score):
+        return self.__g_cor_op(score, self.scale, self.__mf, self.__e)  #, self.__b, self.__e, self.__w, self.__mf)
+
+    @staticmethod
+    @custom_gradient
+    def __g_cor_op(score, k, m, e): # , b, e, w, m):
+
+        # w = array_ops.squeeze(w, 0)
+        # print(w)
+        # GR = gradients(ys=w * k, xs=k)
+        # print(GR)
+
+        def grad(dy):
+            return None,  array_ops.expand_dims(score, -1) * (- ive(m / 2, k) / ive(m/2 - 1, k)
+                                                              ), None, None
+
+        return score, grad
+
+    # def __g_cor_op(score, k, b, e, w, m):
+    #
+    #     e = array_ops.squeeze(e, 0)
+    #     w = array_ops.squeeze(w, 0)
+    #
+    #     def grad(dy):
+    #         return None, array_ops.expand_dims(score, -1) * gradients(ys=- ive(m / 2, k) / ive(m/2 - 1, k
+    #                 ) + w * k + 0.5 * (m - 3) * math_ops.log(
+    #                 1 - w ** 2) + math_ops.log(
+    #                 math_ops.abs(- 2 * b / (((b - 1) * e + 1) ** 2))), xs=k)[0], None, None, None, None
+    #
+    #     return array_ops.identity(score), grad
 
 
 @kullback_leibler.RegisterKL(VonMisesFisher, HypersphericalUniform)

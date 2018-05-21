@@ -85,9 +85,15 @@ class OptimizerVAE(object):
         :param learning_rate: float, learning rate of the optimizer
         """
 
+        self.kl_weight = tf.placeholder_with_default(np.array(1.).astype(np.float64), shape=())
+
         # binary cross entropy error
         self.bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=model.x, logits=model.logits)
-        self.reconstruction_loss = tf.reduce_mean(tf.reduce_sum(self.bce, axis=-1))
+        self.score = tf.reduce_sum(self.bce, axis=-1)
+
+        print('s1', self.score)
+
+        print(model.distribution)
 
         if model.distribution == 'normal':
             # KL divergence between normal approximate posterior and standard normal prior
@@ -99,14 +105,18 @@ class OptimizerVAE(object):
             self.p_z = HypersphericalUniform(model.z_dim - 1, dtype=model.x.dtype)
             kl = model.q_z.kl_divergence(self.p_z)
             self.kl = tf.reduce_mean(kl)
+
+            self.score = - model.q_z.add_g_cor(- self.score)
         else:
             raise NotImplemented
 
+        self.reconstruction_loss = tf.reduce_mean(self.score)
+
         self.ELBO = - self.reconstruction_loss - self.kl
 
-        self.train_step = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(-self.ELBO)
+        self.train_step = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(self.reconstruction_loss + self.kl * self.kl_weight)
 
-        self.print = {'recon loss': self.reconstruction_loss, 'ELBO': self.ELBO, 'KL': self.kl}
+        self.print = {'recon loss': self.reconstruction_loss, 'ELBO': self.ELBO, 'KL': self.kl, 'KL weight': self.kl_weight}
 
 
 def log_likelihood(model, optimizer, n=10):
@@ -137,10 +147,10 @@ def log_likelihood(model, optimizer, n=10):
 
 # hidden dimension and dimension of latent space
 H_DIM = 128
-Z_DIM = 2
+Z_DIM = 5
 
 # digit placeholder
-x = tf.placeholder(tf.float64, shape=(None, 784))
+x = tf.placeholder(tf.float32, shape=(None, 784))
 
 # normal VAE
 modelN = ModelVAE(x=x, h_dim=H_DIM, z_dim=Z_DIM, distribution='normal')
@@ -153,37 +163,42 @@ optimizerS = OptimizerVAE(modelS)
 session = tf.Session()
 session.run(tf.global_variables_initializer())
 
-print('##### Normal VAE #####')
-for i in range(1000):
-    # training
-    x_mb, _ = mnist.train.next_batch(64)
-    session.run(optimizerN.train_step, {modelN.x: x_mb})
+EPOCHS = 1
+BATCH_SIZE = 64
 
-    # every 100 iteration plot validation
-    if i % 100 == 0:
-        x_mb = mnist.validation.images
-        print(i, session.run({**optimizerN.print}, {modelN.x: x_mb}))
-
-print('Test set:')
-x_mb = mnist.test.images
-print_ = {**optimizerN.print}
-print_['LL'] = log_likelihood(modelN, optimizerN, n=100)
-print(session.run(print_, {modelN.x: x_mb}))
+print()
+#
+# print('##### Normal VAE #####')
+# for epoch in range(EPOCHS):
+#     for step in range(mnist.train.images.shape[0] // BATCH_SIZE):
+#         # training
+#         x_mb, _ = mnist.train.next_batch(BATCH_SIZE)
+#         session.run(optimizerN.train_step, {modelN.x: x_mb})
+#
+#     # at the end of every epoch plot validation
+#     x_mb = mnist.validation.images
+#     print(epoch, session.run({**optimizerN.print}, {modelN.x: x_mb}))
+#
+# print('Test set:')
+# x_mb = mnist.test.images
+# print_ = {**optimizerN.print}
+# print_['LL'] = log_likelihood(modelN, optimizerN, n=1000)
+# print(session.run(print_, {modelN.x: x_mb}))
 
 print()
 print('##### Hyper-spherical VAE #####')
-for i in range(1000):
-    # training
-    x_mb, _ = mnist.train.next_batch(64)
-    session.run(optimizerS.train_step, {modelS.x: x_mb})
+for epoch in range(EPOCHS):
+    for step in range(10):  # range(mnist.train.images.shape[0] // BATCH_SIZE):
+        # training
+        x_mb, _ = mnist.train.next_batch(BATCH_SIZE)
+        session.run(optimizerS.train_step, {modelS.x: x_mb})
 
-    # every 100 iteration plot validation
-    if i % 100 == 0:
-        x_mb = mnist.validation.images
-        print(i, session.run({**optimizerS.print}, {modelS.x: x_mb}))
+    # at the end of every epoch plot validation
+    x_mb = mnist.validation.images
+    print(epoch, session.run({**optimizerS.print}, {modelS.x: x_mb}))
 
 print('Test set:')
 x_mb = mnist.test.images
 print_ = {**optimizerS.print}
-print_['LL'] = log_likelihood(modelS, optimizerS, n=100)
+print_['LL'] = log_likelihood(modelS, optimizerS, n=1000)
 print(session.run(print_, {modelS.x: x_mb}))

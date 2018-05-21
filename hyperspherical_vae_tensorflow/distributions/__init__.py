@@ -1,0 +1,2 @@
+from hyperspherical_vae_tensorflow.distributions.von_mises_fisher import VonMisesFisher
+from hyperspherical_vae_tensorflow.distributions.hyperspherical_uniform import HypersphericalUniform
